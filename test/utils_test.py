@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, call
 import numpy as np
 import pytest
 
+from p2pfl.utils.node_component import NodeComponent, allow_no_addr_check
 from p2pfl.utils.topologies import TopologyFactory, TopologyType
 
 
@@ -87,6 +88,99 @@ def test_connect_nodes(adjacency_matrix, expected_calls):
 
 def test_invalid_topology_type():
     """Test that an exception is raised when an invalid topology type is passed."""
-    with pytest.raises(TypeError) as excinfo:
-        TopologyFactory.generate_matrix("invalid_type", 4)  # Pass a string, not enum
-    assert str(excinfo.value) == "topology_type must be a TopologyType enum member"
+    with pytest.raises(ValueError):
+        TopologyFactory.generate_matrix("invalid_type", 4)
+
+
+@pytest.mark.parametrize(
+    "topology_type, num_nodes",
+    [
+        (TopologyType.RANDOM_2, 0),
+        (TopologyType.RANDOM_2, 1),
+        (TopologyType.RANDOM_2, 2),
+        (TopologyType.RANDOM_2, 10),
+        (TopologyType.RANDOM_3, 0),
+        (TopologyType.RANDOM_3, 1),
+        (TopologyType.RANDOM_3, 2),
+        (TopologyType.RANDOM_3, 10),
+        (TopologyType.RANDOM_4, 0),
+        (TopologyType.RANDOM_4, 1),
+        (TopologyType.RANDOM_4, 2),
+        (TopologyType.RANDOM_4, 10),
+    ],
+)
+def test_generate_random_matrix_properties(topology_type, num_nodes):
+    """Test properties of randomly generated adjacency matrices."""
+    matrix = TopologyFactory.generate_matrix(topology_type, num_nodes)
+
+    # Check shape
+    assert matrix.shape == (num_nodes, num_nodes)
+
+    # Check diagonal is zero
+    assert np.all(np.diag(matrix) == 0)
+
+    # Check symmetry
+    assert np.array_equal(matrix, matrix.T)
+
+    # Check number of edges
+    if num_nodes <= 1:
+        expected_num_edges = 0
+    else:
+        if topology_type == TopologyType.RANDOM_2:
+            avg_degree = 2
+        elif topology_type == TopologyType.RANDOM_3:
+            avg_degree = 3
+        else:  # RANDOM_4
+            avg_degree = 4
+
+        # Calculate expected number of edges based on implementation logic
+        num_edges_target = round(num_nodes * avg_degree / 2)
+        max_possible_edges = num_nodes * (num_nodes - 1) // 2
+        expected_num_edges = min(num_edges_target, max_possible_edges)
+
+    actual_num_edges = np.sum(matrix) // 2
+    assert actual_num_edges == expected_num_edges
+
+
+class MockNodeComponent(NodeComponent):
+    """Mock class inheriting from NodeComponent for testing."""
+
+    def __init__(self):
+        """Initialize the mock class."""
+        # super init
+        super().__init__()
+
+    def example_method(self) -> str:
+        """Return the address. Example method that requires addr to be set."""
+        return self.addr
+
+    @allow_no_addr_check
+    def get_default_name(self) -> str:
+        """Return "Hola!". A method with no addr check."""
+        return "Hola!"
+
+
+def test_node_component_initialization():
+    """Test initial state and setting of addr."""
+    component = MockNodeComponent()
+    assert component.addr == ""
+
+    addr = "test_address"
+    returned_addr = component.set_addr(addr)
+    assert component.addr == addr
+    assert returned_addr == addr
+
+
+def test_node_component_methods():
+    """Test method calls with and without addr set."""
+    component = MockNodeComponent()
+    assert component.get_default_name() == "Hola!"
+
+    # Method call without addr should raise ValueError
+    with pytest.raises(ValueError):
+        component.example_method()
+
+    # Method call with addr set should succeed
+    addr = "test_address"
+    component.set_addr(addr)
+    assert component.example_method() == addr

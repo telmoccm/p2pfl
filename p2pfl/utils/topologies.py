@@ -34,13 +34,16 @@ class TopologyType(Enum):
     FULL = "full"
     LINE = "line"
     RING = "ring"
+    RANDOM_2 = "random_2"  # Random graph with average degree 2
+    RANDOM_3 = "random_3"  # Random graph with average degree 3
+    RANDOM_4 = "random_4"  # Random graph with average degree 4
 
 
 class TopologyFactory:
     """Factory class for generating network topologies."""
 
     @staticmethod
-    def generate_matrix(topology_type: TopologyType, num_nodes: int) -> np.ndarray:
+    def generate_matrix(topology_type: TopologyType | str, num_nodes: int) -> np.ndarray:
         """
         Generate the adjacency matrix for the specified topology.
 
@@ -49,8 +52,8 @@ class TopologyFactory:
             num_nodes: The number of nodes in the network.
 
         """
-        if not isinstance(topology_type, TopologyType):
-            raise TypeError("topology_type must be a TopologyType enum member")
+        if isinstance(topology_type, str):
+            topology_type = TopologyType(topology_type)
 
         matrix = np.zeros((num_nodes, num_nodes), dtype=int)  # Initialize as NumPy array
 
@@ -68,6 +71,42 @@ class TopologyFactory:
             for i in range(num_nodes):
                 matrix[i, (i + 1) % num_nodes] = 1
                 matrix[(i + 1) % num_nodes, i] = 1
+        elif topology_type in [TopologyType.RANDOM_2, TopologyType.RANDOM_3, TopologyType.RANDOM_4]:
+            # Erdős–Rényi G(n, M) model: select M edges randomly
+            if num_nodes <= 1:
+                return matrix  # No edges possible for 0 or 1 node
+
+            if topology_type == TopologyType.RANDOM_2:
+                avg_degree = 2
+            elif topology_type == TopologyType.RANDOM_3:
+                avg_degree = 3
+            else:  # RANDOM_4
+                avg_degree = 4
+
+            # Calculate target number of edges M = (n * avg_degree) / 2
+            num_edges_target = round(num_nodes * avg_degree / 2)
+
+            rng = np.random.default_rng()
+            possible_edges = []
+            for i in range(num_nodes):
+                for j in range(i + 1, num_nodes):
+                    possible_edges.append((i, j))
+
+            max_possible_edges = len(possible_edges)
+            if max_possible_edges == 0:
+                return matrix  # Should not happen if num_nodes > 1 but good practice
+
+            # Ensure we don't try to select more edges than possible
+            num_edges_to_select = min(num_edges_target, max_possible_edges)
+
+            if num_edges_to_select > 0:
+                selected_indices = rng.choice(max_possible_edges, size=num_edges_to_select, replace=False)
+                for index in selected_indices:
+                    i, j = possible_edges[index]
+                    matrix[i, j] = 1
+                    matrix[j, i] = 1
+        else:
+            raise ValueError(f"Unsupported topology type: {topology_type}")
 
         return matrix
 
@@ -87,7 +126,7 @@ class TopologyFactory:
                 if adjacency_matrix[i, j] == 1:
                     try:
                         nodes[i].connect(nodes[j].addr)
-                        print(f"Connected nodes {i} and {j}")
+                        print(f"Connected nodes {nodes[i].addr} and {nodes[j].addr}")
                         time.sleep(0.1)
                     except Exception as e:
-                        print(f"Error connecting nodes {i} and {j}: {e}")
+                        print(f"Error connecting nodes {nodes[i].addr} and {nodes[j].addr}: {e}")

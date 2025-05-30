@@ -36,13 +36,13 @@ class DataExportStrategy(ABC):
 
     @staticmethod
     @abstractmethod
-    def export(data: Dataset, transforms: Optional[Callable] = None, **kwargs) -> Any:
+    def export(data: Dataset, batch_size: Optional[int] = None, **kwargs) -> Any:
         """
         Export the data using the specific strategy.
 
         Args:
-            data: The data to export.
-            transforms: The transforms to apply to the data.
+            data: The data to export. Transforms should already be applied to the dataset.
+            batch_size: The batch size for the export.
             **kwargs: Additional keyword arguments for the export strategy.
 
         Return:
@@ -103,7 +103,7 @@ class P2PFLDataset:
         data: Union[Dataset, DatasetDict],
         train_split_name: str = "train",
         test_split_name: str = "test",
-        transforms: Optional[Callable] = None,
+        batch_size: int = 1,
     ):
         """
         Initialize the P2PFLDataset object.
@@ -112,13 +112,13 @@ class P2PFLDataset:
             data: The dataset to use.
             train_split_name: The name of the training split.
             test_split_name: The name of the test split.
-            transforms: The transforms to apply to the data.
+            batch_size: The batch size for the dataset.
 
         """
         self._data = data
         self._train_split_name = train_split_name
         self._test_split_name = test_split_name
-        self._transforms = transforms
+        self.batch_size = batch_size
 
     def get(self, idx, train: bool = True) -> Dict[str, Any]:
         """
@@ -141,27 +141,38 @@ class P2PFLDataset:
 
     def set_transforms(self, transforms: Callable) -> None:
         """
-        Set the transforms to apply to the data.
+        Set the transforms to apply to the data, delegating to the Hugging Face dataset.
 
         Args:
             transforms: The transforms to apply to the data.
 
         """
-        self._transforms = transforms
+        if isinstance(self._data, Dataset):
+            self._data.set_transform(transforms)
+        elif isinstance(self._data, DatasetDict):
+            for split in self._data:
+                self._data[split].set_transform(transforms)
 
-    def generate_train_test_split(self, test_size: float = 0.2, seed: int = 42, shuffle: bool = True, **kwargs) -> None:
+    def set_batch_size(self, batch_size: int) -> None:
+        """
+        Set the batch size for the dataset.
+
+        Args:
+            batch_size: The batch size for the dataset.
+
+        """
+        self.batch_size = batch_size
+
+    def generate_train_test_split(self, **kwargs) -> None:
         """
         Generate a train/test split of the dataset.
 
         Args:
-            test_size: The proportion of the dataset to include in the test split.
-            seed: The random seed to use for reproducibility.
-            shuffle: Whether to shuffle the data before splitting.
             **kwargs: Additional keyword arguments to pass to the train_test_split method.
 
         """
         if isinstance(self._data, Dataset):
-            self._data = self._data.train_test_split()
+            self._data = self._data.train_test_split(**kwargs)
         else:
             raise ValueError("Unsupported data type.")
 
@@ -185,7 +196,7 @@ class P2PFLDataset:
             raise TypeError("Unsupported data type.")
 
     def generate_partitions(
-        self, num_partitions: int, strategy: DataPartitionStrategy, seed: int = 666, label_tag: str = "label"
+        self, num_partitions: int, strategy: DataPartitionStrategy, seed: int = 666, label_tag: str = "label", **kwargs
     ) -> List["P2PFLDataset"]:
         """
         Generate partitions of the dataset.
@@ -195,6 +206,7 @@ class P2PFLDataset:
             strategy: The partition strategy to use.
             seed: The random seed to use for reproducibility.
             label_tag: The tag to use for the label.
+            **kwargs: Additional keyword arguments for the partition strategy.
 
         Returns:
             An iterable of P2PFLDataset objects.
@@ -208,6 +220,7 @@ class P2PFLDataset:
             num_partitions,
             seed=seed,
             label_tag=label_tag,
+            **kwargs,
         )
         return [
             P2PFLDataset(
@@ -216,7 +229,10 @@ class P2PFLDataset:
                         self._train_split_name: self._data[self._train_split_name].select(train_partition_idxs[i]),
                         self._test_split_name: self._data[self._test_split_name].select(test_partition_idxs[i]),
                     }
-                )
+                ),
+                train_split_name=self._train_split_name,
+                test_split_name=self._test_split_name,
+                batch_size=self.batch_size,
             )
             for i in range(num_partitions)
         ]
@@ -245,7 +261,7 @@ class P2PFLDataset:
 
         # Export
         split = self._train_split_name if train else self._test_split_name
-        return strategy.export(self._data[split], transforms=self._transforms, **kwargs)
+        return strategy.export(self._data[split], batch_size=self.batch_size, **kwargs)
 
     @classmethod
     def from_csv(cls, data_files: DataFilesType, **kwargs) -> "P2PFLDataset":
